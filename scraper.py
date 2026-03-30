@@ -9,6 +9,45 @@ import urllib.request
 import urllib.parse
 import re
 
+def format_location_for_supreme(display_name: str) -> tuple:
+    """
+    Convert 'Miami, Miami-Dade County, Florida, United States'
+    into ('florida', 'miami', 'Miami')
+    """
+    parts = [p.strip().lower() for p in display_name.split(",")]
+    
+    # parts[0] = city, parts[-2] = state (usually), parts[-1] = country
+    city_slug = parts[0].replace(" ", "-")
+    
+    # Find the state — it's usually the second to last part before "United States"
+    state_slug = ""
+    for part in parts:
+        part = part.strip()
+        us_states = {
+            "alabama": "alabama", "alaska": "alaska", "arizona": "arizona",
+            "arkansas": "arkansas", "california": "california", "colorado": "colorado",
+            "connecticut": "connecticut", "delaware": "delaware", "florida": "florida",
+            "georgia": "georgia", "hawaii": "hawaii", "idaho": "idaho",
+            "illinois": "illinois", "indiana": "indiana", "iowa": "iowa",
+            "kansas": "kansas", "kentucky": "kentucky", "louisiana": "louisiana",
+            "maine": "maine", "maryland": "maryland", "massachusetts": "massachusetts",
+            "michigan": "michigan", "minnesota": "minnesota", "mississippi": "mississippi",
+            "missouri": "missouri", "montana": "montana", "nebraska": "nebraska",
+            "nevada": "nevada", "new hampshire": "new-hampshire", "new jersey": "new-jersey",
+            "new mexico": "new-mexico", "new york": "new-york", "north carolina": "north-carolina",
+            "north dakota": "north-dakota", "ohio": "ohio", "oklahoma": "oklahoma",
+            "oregon": "oregon", "pennsylvania": "pennsylvania", "rhode island": "rhode-island",
+            "south carolina": "south-carolina", "south dakota": "south-dakota",
+            "tennessee": "tennessee", "texas": "texas", "utah": "utah",
+            "vermont": "vermont", "virginia": "virginia", "washington": "washington",
+            "west virginia": "west-virginia", "wisconsin": "wisconsin", "wyoming": "wyoming"
+        }
+        if part in us_states:
+            state_slug = us_states[part]
+            break
+
+    return state_slug, city_slug
+
 def get_coordinates(location: str) -> tuple:
     """Convert a city/zip to lat/lng using free Nominatim API"""
     import urllib.parse
@@ -117,18 +156,35 @@ async def scrape_supreme_golf(
     location: str,
     lat: float,
     lng: float,
-    date: str,           # "YYYY-MM-DD"
+    date: str,
     players: int = 1,
-    holes: int = 18
+    holes: int = 18,
+    state_slug: str = "",
+    city_slug: str = ""
 ):
-    url = (
-        f"https://www.supremegolf.com/search"
-        f"?address={location}"
-        f"&lat={lat}&lng={lng}"
-        f"&date={date}"
-        f"&holes={holes}"
+    # Build URL matching Supreme Golf's actual format
+    base = f"https://www.supremegolf.com/explore/united-states/{state_slug}/{city_slug}"
+    
+    params = (
+        f"?date={date}"
         f"&players={players}"
+        f"&holes={holes if holes else ''}"
+        f"&cart="
+        f"&dealsOnly=false"
+        f"&foreplayReviewedOnly=false"
+        f"&hotDealsSearch=false"
+        f"&isPrepaidOnly=false"
+        f"&barstoolBestOnly=false"
+        f"&marketingPromotionOnly=false"
+        f"&networkMembershipOnly=false"
+        f"&isRecommendedDate=false"
+        f"&price="
+        f"&rate="
+        f"&time="
     )
+    
+    url = base + params
+    print(f"Scraping: {url}")
 
     print(f"Scraping: {url}")
     results = []
@@ -332,6 +388,10 @@ async def main():
         print(e)
         return
 
+    # Get state and city slugs for Supreme Golf URL
+    state_slug, city_slug = format_location_for_supreme(display_name)
+    print(f"Supreme Golf path: /explore/united-states/{state_slug}/{city_slug}")
+
     # Scrape for each date
     base_date = datetime.today()
     total_results = []
@@ -346,7 +406,9 @@ async def main():
             lng=lng,
             date=date_str,
             players=players,
-            holes=holes
+            holes=holes,
+            state_slug=state_slug,
+            city_slug=city_slug
         )
 
         if results:
