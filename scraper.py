@@ -132,11 +132,11 @@ async def scrape_supreme_golf(
                 addr_el = await card.query_selector('[data-qa-node="address"], [class*="address"]')
                 address = await addr_el.inner_text() if addr_el else ""
 
-                # Rating
-                rating_el = await card.query_selector('[data-qa-node="rating"], [class*="rating"]')
+                # Rating — sits next to the StarFilledIcon svg
+                rating_el = await card.query_selector('[data-qa-node="StarFilledIcon"] + p, p[data-qa-file="CourseTile"][data-qa-node="p"]')
                 rating_text = await rating_el.inner_text() if rating_el else "0"
                 try:
-                    rating = float(rating_text.strip().split()[0])
+                    rating = float(rating_text.strip())
                 except:
                     rating = 0.0
 
