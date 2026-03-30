@@ -11,17 +11,62 @@ import re
 
 def get_coordinates(location: str) -> tuple:
     """Convert a city/zip to lat/lng using free Nominatim API"""
+    import urllib.parse
+    import urllib.request
+    import json
+
     query = urllib.parse.quote(location)
-    url = f"https://nominatim.openstreetmap.org/search?q={query}&format=json&limit=1"
-    
-    req = urllib.request.Request(url, headers={"User-Agent": "TeeTimeFinder/1.0"})
+    url = (
+        f"https://nominatim.openstreetmap.org/search"
+        f"?q={query}"
+        f"&format=json"
+        f"&limit=5"
+        f"&addressdetails=1"
+        f"&countrycodes=us"  # restrict to USA only
+    )
+
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "TeeTimeFinder/1.0 rgsroda@yahoo.com"}
+    )
     with urllib.request.urlopen(req) as response:
         data = json.loads(response.read())
-    
+
     if not data:
         raise ValueError(f"Could not find coordinates for: {location}")
-    
-    return float(data[0]["lat"]), float(data[0]["lon"]), data[0]["display_name"]
+
+    # Print all candidates so you can see what it found
+    print("\nLocation candidates found:")
+    for i, result in enumerate(data):
+        print(f"  [{i}] {result['display_name']} (lat={result['lat']}, lon={result['lon']})")
+
+    # Prefer results where the type is city/town/village
+    preferred_types = ["city", "town", "village", "municipality", "administrative"]
+    best = None
+    for result in data:
+        if result.get("type") in preferred_types or result.get("class") == "place":
+            best = result
+            break
+
+    # Fall back to first result if nothing preferred found
+    if not best:
+        best = data[0]
+
+    print(f"\nUsing: {best['display_name']}")
+    lat = float(best["lat"])
+    lng = float(best["lon"])
+
+    # Let user confirm or pick a different one
+    confirm = input(f"\nIs this correct? (y/n): ").strip().lower()
+    if confirm != "y":
+        idx = input(f"Enter the number [0-{len(data)-1}] of the correct location: ").strip()
+        if idx.isdigit() and int(idx) < len(data):
+            best = data[int(idx)]
+            lat = float(best["lat"])
+            lng = float(best["lon"])
+            print(f"Using: {best['display_name']}")
+
+    return lat, lng, best["display_name"]
 
 
 # ── DATABASE SETUP ──────────────────────────────────────────
@@ -134,20 +179,22 @@ async def scrape_supreme_golf(
                 name_el = await card.query_selector('[data-qa-node="h2"], h2, h3')
                 course_name = await name_el.inner_text() if name_el else "Unknown"
 
-                # Address
-                addr_el = await card.query_selector('[data-qa-node="address"], [class*="address"]')
-                address = await addr_el.inner_text() if addr_el else ""
+                city_el = await card.query_selector('p.text-grey-3:last-of-type')
+                address = await city_el.inner_text() if city_el else ""
 
                 # Rating — sits next to the StarFilledIcon svg
                 rating = 0.0
                 try:
-                    rating_container = await card.query_selector('[data-qa-node="StarFilledIcon"]')
-                    if rating_container:
-                        # Get the next sibling p element directly
-                        rating_text = await rating_container.evaluate(
-                            "el => el.nextElementSibling ? el.nextElementSibling.innerText : '0'"
-                        )
-                        rating = float(rating_text.strip())
+                    rating_text = await card.evaluate("""
+                        card => {
+                            const star = card.querySelector('[data-qa-node="StarFilledIcon"]');
+                            if (star && star.nextElementSibling) {
+                                return star.nextElementSibling.innerText;
+                            }
+                            return '0';
+                        }
+                    """)
+                    rating = float(rating_text.strip())
                 except:
                     rating = 0.0
 
@@ -182,7 +229,7 @@ async def scrape_supreme_golf(
                     results.append({
                         "course_name": course_name.strip(),
                         "address": address.strip(),
-                        "city": extract_city(address),
+                        "city": city_el.strip(),
                         "state": extract_state(address),
                         "price": price,
                         "tee_time": t,
