@@ -97,7 +97,7 @@ async def scrape_supreme_golf(
         page = await context.new_page()
 
         # Navigate and wait for results to load
-        await page.goto(url, wait_until="networkidle", timeout=30000)
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
 
         # Give JS a moment to fully render
         await asyncio.sleep(random.uniform(2, 4))
