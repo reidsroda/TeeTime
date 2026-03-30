@@ -123,10 +123,10 @@ async def scrape_supreme_golf(
         print(f"Found {len(course_cards)} course cards")
 
         if course_cards:
-        html = await course_cards[0].inner_html()
-        print("\n── FIRST CARD HTML ──────────────────")
-        print(html[:3000])
-        print("────────────────────────────────────\n")
+            html = await course_cards[0].inner_html()
+            print("\n── FIRST CARD HTML ──────────────────")
+            print(html[:3000])
+            print("────────────────────────────────────\n")
 
         for card in course_cards:
             try:
