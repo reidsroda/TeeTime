@@ -122,6 +122,12 @@ async def scrape_supreme_golf(
         course_cards = await page.query_selector_all('[id="Course-tile-wrapper"]')
         print(f"Found {len(course_cards)} course cards")
 
+        if course_cards:
+        html = await course_cards[0].inner_html()
+        print("\n── FIRST CARD HTML ──────────────────")
+        print(html[:3000])
+        print("────────────────────────────────────\n")
+
         for card in course_cards:
             try:
                 # Course name — first w-full flex items-center div contains name
