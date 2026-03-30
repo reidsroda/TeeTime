@@ -179,8 +179,23 @@ async def scrape_supreme_golf(
                 name_el = await card.query_selector('[data-qa-node="h2"], h2, h3')
                 course_name = await name_el.inner_text() if name_el else "Unknown"
 
-                city_el = await card.query_selector('p.text-grey-3:last-of-type')
-                address = await city_el.inner_text() if city_el else ""
+                # City and state — Supreme Golf shows them in a p tag like "Westbury, NY"
+                address = ""
+                city = ""
+                state = ""
+                try:
+                    # Get all grey p tags — first is "X miles away", second is "City, ST"
+                    grey_ps = await card.query_selector_all('p.text-grey-3')
+                    for p in grey_ps:
+                        text = await p.inner_text()
+                        # City/state tag contains a comma like "Miami, FL"
+                        if "," in text and "miles" not in text.lower():
+                            address = text.strip()
+                            city = extract_city(address)
+                            state = extract_state(address)
+                            break
+                except:
+                    pass
 
                 # Rating — sits next to the StarFilledIcon svg
                 rating = 0.0
@@ -228,9 +243,9 @@ async def scrape_supreme_golf(
                 for t in times_to_save:
                     results.append({
                         "course_name": course_name.strip(),
-                        "address": address.strip(),
-                        "city": city_el.strip(),
-                        "state": extract_state(address),
+                        "address": address,
+                        "city": city,
+                        "state": state,
                         "price": price,
                         "tee_time": t,
                         "date": date,
@@ -262,16 +277,25 @@ def parse_price(text: str) -> float:
         return 0.0
 
 def extract_city(address: str) -> str:
+    """Extract city from Supreme Golf's address format: 'X miles away | City, ST'"""
     try:
+        # Supreme Golf shows city/state like "Westbury, NY"
+        # address string from the p tags is just "Westbury, NY"
         parts = address.split(",")
-        return parts[-2].strip() if len(parts) >= 2 else ""
+        if len(parts) >= 2:
+            return parts[0].strip()
+        return address.strip()
     except:
         return ""
 
 def extract_state(address: str) -> str:
+    """Extract state from Supreme Golf's address format"""
     try:
         parts = address.split(",")
-        return parts[-1].strip().split()[0] if parts else ""
+        if len(parts) >= 2:
+            # State may have extra text like " NY 11590" — just grab first word
+            return parts[1].strip().split()[0]
+        return ""
     except:
         return ""
 
