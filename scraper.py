@@ -124,9 +124,9 @@ async def scrape_supreme_golf(
 
         if course_cards:
             html = await course_cards[0].inner_html()
-            print("\n── FIRST CARD HTML ──────────────────")
-            print(html[:3000])
-            print("────────────────────────────────────\n")
+            with open("debug_card.html", "w") as f:
+                f.write(html)
+            print("First card HTML written to debug_card.html")
 
         for card in course_cards:
             try:
