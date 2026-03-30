@@ -7,6 +7,7 @@ import time
 import random
 import urllib.request
 import urllib.parse
+import re
 
 def get_coordinates(location: str) -> tuple:
     """Convert a city/zip to lat/lng using free Nominatim API"""
@@ -108,61 +109,72 @@ async def scrape_supreme_golf(
             await asyncio.sleep(random.uniform(0.8, 1.5))
 
         # ── PARSE COURSE CARDS ──────────────────────────────
-        # Supreme Golf renders course cards — adjust selectors
-        # if they update their HTML structure
-        course_cards = await page.query_selector_all(
-            "[class*='course-card'], [class*='CourseCard'], [data-testid*='course']"
-        )
+        # Wait for course tiles to appear
+        await page.wait_for_selector('[data-qa-file="CourseTile"]', timeout=15000)
+        await asyncio.sleep(random.uniform(2, 4))
 
+        # Scroll to load all results
+        for _ in range(5):
+            await page.keyboard.press("End")
+            await asyncio.sleep(random.uniform(0.8, 1.5))
+
+        # Get all top-level course tile wrappers
+        course_cards = await page.query_selector_all('[id="Course-tile-wrapper"]')
         print(f"Found {len(course_cards)} course cards")
 
         for card in course_cards:
             try:
-                # Course name
-                name_el = await card.query_selector(
-                    "[class*='course-name'], [class*='CourseName'], h2, h3"
-                )
+                # Course name — first w-full flex items-center div contains name
+                name_el = await card.query_selector('[data-qa-node="h2"], h2, h3')
                 course_name = await name_el.inner_text() if name_el else "Unknown"
 
                 # Address
-                addr_el = await card.query_selector(
-                    "[class*='address'], [class*='location'], [class*='Address']"
-                )
+                addr_el = await card.query_selector('[data-qa-node="address"], [class*="address"]')
                 address = await addr_el.inner_text() if addr_el else ""
 
                 # Rating
-                rating_el = await card.query_selector(
-                    "[class*='rating'], [class*='Rating'], [class*='stars']"
-                )
+                rating_el = await card.query_selector('[data-qa-node="rating"], [class*="rating"]')
                 rating_text = await rating_el.inner_text() if rating_el else "0"
                 try:
                     rating = float(rating_text.strip().split()[0])
                 except:
                     rating = 0.0
 
-                # Tee time slots within this card
-                time_slots = await card.query_selector_all(
-                    "[class*='tee-time'], [class*='TeeTime'], [class*='time-slot']"
-                )
+                # Price — we can see it uses data-qa-file="CourseTile" and class "text-dark font-black"
+                price_els = await card.query_selector_all('p[data-qa-file="CourseTile"]')
+                price = 0.0
+                for p_el in price_els:
+                    text = await p_el.inner_text()
+                    if "$" in text:
+                        price = parse_price(text)
+                        break
 
-                if not time_slots:
-                    # Some cards show price without individual time slots
-                    price_el = await card.query_selector(
-                        "[class*='price'], [class*='Price'], [class*='rate']"
-                    )
-                    price_text = await price_el.inner_text() if price_el else "0"
-                    price = parse_price(price_text)
+                # Tee time slots
+                time_slots = await card.query_selector_all('[data-qa-file="CourseTile"][data-qa-node="div"]')
+                tee_times_found = []
+                for slot in time_slots:
+                    text = await slot.inner_text()
+                    # Look for time patterns like "8:30 AM"
+                    import re
+                    times = re.findall(r'\d{1,2}:\d{2}\s?[AP]M', text)
+                    tee_times_found.extend(times)
 
-                    booking_el = await card.query_selector("a[href*='book'], a[href*='tee']")
-                    booking_url = await booking_el.get_attribute("href") if booking_el else ""
+                # Booking URL
+                booking_el = await card.query_selector("a")
+                booking_url = await booking_el.get_attribute("href") if booking_el else ""
+                if booking_url and not booking_url.startswith("http"):
+                    booking_url = "https://www.supremegolf.com" + booking_url
 
+                # Save one record per tee time, or one record if no times found
+                times_to_save = tee_times_found if tee_times_found else [""]
+                for t in times_to_save:
                     results.append({
                         "course_name": course_name.strip(),
                         "address": address.strip(),
                         "city": extract_city(address),
                         "state": extract_state(address),
                         "price": price,
-                        "tee_time": "",
+                        "tee_time": t,
                         "date": date,
                         "holes": holes,
                         "players": players,
@@ -172,38 +184,6 @@ async def scrape_supreme_golf(
                         "booking_url": booking_url,
                         "scraped_at": datetime.now().isoformat()
                     })
-                else:
-                    for slot in time_slots:
-                        time_text_el = await slot.query_selector(
-                            "[class*='time'], span, div"
-                        )
-                        time_text = await time_text_el.inner_text() if time_text_el else ""
-
-                        price_el = await slot.query_selector(
-                            "[class*='price'], [class*='rate']"
-                        )
-                        price_text = await price_el.inner_text() if price_el else "0"
-                        price = parse_price(price_text)
-
-                        booking_el = await slot.query_selector("a")
-                        booking_url = await booking_el.get_attribute("href") if booking_el else ""
-
-                        results.append({
-                            "course_name": course_name.strip(),
-                            "address": address.strip(),
-                            "city": extract_city(address),
-                            "state": extract_state(address),
-                            "price": price,
-                            "tee_time": time_text.strip(),
-                            "date": date,
-                            "holes": holes,
-                            "players": players,
-                            "walking": 0,
-                            "rating": rating,
-                            "source_platform": "Supreme Golf",
-                            "booking_url": booking_url,
-                            "scraped_at": datetime.now().isoformat()
-                        })
 
             except Exception as e:
                 print(f"Error parsing card: {e}")
