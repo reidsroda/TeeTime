@@ -194,6 +194,7 @@ async def scrape_supreme_golf(
         page.on("response", handle_response)
 
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+        await page.screenshot(path="debug.png")
 
         # Wait up to 15 seconds for location_list to fire
         for _ in range(15):
