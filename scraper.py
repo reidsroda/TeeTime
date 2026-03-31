@@ -169,13 +169,36 @@ async def scrape_supreme_golf(
         # Navigate to search page — this triggers location_list API call
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
         await asyncio.sleep(5)
-
-        # Now click each course card to trigger tee_time_groups API calls
-        # Or scroll to trigger lazy loading
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        await asyncio.sleep(3)
-        await page.evaluate("window.scrollTo(0, 0)")
-        await asyncio.sleep(2)
+    
+        # Use the browser's own fetch to call tee_time_groups for each course
+        if intercepted_courses:
+            print(f"  Fetching tee times for {len(intercepted_courses)} courses via in-browser fetch...")
+            for course in intercepted_courses:
+                course_id = course["id"]
+                api_url = (
+                    f"https://api.supremegolf.com/api/v6/tee_time_groups/at/{course_id}"
+                    f"?date={date}&num_holes={holes}&is_prepaid_only=false"
+                    f"&include_featured=true&network_membership_only=false"
+                )
+                try:
+                    result = await page.evaluate(f"""
+                        async () => {{
+                            const resp = await fetch("{api_url}", {{
+                                headers: {{
+                                    "Accept": "application/json",
+                                    "Referer": "https://www.supremegolf.com/"
+                                }}
+                            }});
+                            if (resp.ok) return await resp.json();
+                            return null;
+                        }}
+                    """)
+                    if result and result.get("tee_time_groups"):
+                        intercepted_tee_times[course_id] = result["tee_time_groups"]
+                        print(f"    Got {len(result['tee_time_groups'])} tee times for course {course_id}")
+                except Exception as e:
+                    print(f"    Error for course {course_id}: {e}")
+                await asyncio.sleep(0.3)
 
         await browser.close()
 
