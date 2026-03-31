@@ -2,7 +2,6 @@ import asyncio
 import json
 import sqlite3
 import urllib.parse
-import urllib.request
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
@@ -59,33 +58,10 @@ def save_tee_times(tee_times: list):
     conn.close()
 
 
-# ── GEOCODING ─────────────────────────────────────────────────
-def get_coordinates(location: str) -> tuple:
-    query = urllib.parse.quote(location + ", USA")
-    url = (
-        f"https://nominatim.openstreetmap.org/search"
-        f"?q={query}&format=json&limit=5&addressdetails=1&countrycodes=us"
-    )
-    req = urllib.request.Request(url, headers={"User-Agent": "TeeTimeFinder/1.0"})
-    with urllib.request.urlopen(req) as response:
-        data = json.loads(response.read())
-
-    if not data:
-        raise ValueError(f"Could not find coordinates for: {location}")
-
-    preferred = ["city", "town", "village", "municipality", "administrative"]
-    best = next(
-        (r for r in data if r.get("type") in preferred or r.get("class") == "place"),
-        data[0]
-    )
-    print(f"Using location: {best['display_name']}")
-    print(f"Coordinates: {best['lat']}, {best['lon']}")
-    return float(best["lat"]), float(best["lon"]), best["display_name"]
-
-
-def format_location_for_supreme(display_name: str, raw_input: str = "") -> tuple:
-    source = raw_input if raw_input else display_name
-    parts = [p.strip().lower() for p in source.split(",")]
+# ── LOCATION PARSING ──────────────────────────────────────────
+def format_location_for_supreme(raw_input: str) -> tuple:
+    """Convert 'Miami, FL' -> ('florida', 'miami')"""
+    parts = [p.strip().lower() for p in raw_input.split(",")]
     city_slug = parts[0].replace(" ", "-")
 
     us_state_abbrevs = {
@@ -194,7 +170,6 @@ async def scrape_supreme_golf(
         page.on("response", handle_response)
 
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        await page.screenshot(path="debug.png")
 
         # Wait up to 15 seconds for location_list to fire
         for _ in range(15):
@@ -337,13 +312,7 @@ async def run_scraper(city: str, state_abbrev: str, date: str, players: int = 1,
     """Entry point called by backend.py"""
     init_db()
     location = f"{city}, {state_abbrev}"
-    try:
-        lat, lng, display_name = get_coordinates(location)
-    except ValueError as e:
-        print(e)
-        return 0
-
-    state_slug, city_slug = format_location_for_supreme(display_name, raw_input=location)
+    state_slug, city_slug = format_location_for_supreme(location)
     print(f"Supreme Golf path: /united-states/{state_slug}/{city_slug}")
 
     results = await scrape_supreme_golf(
@@ -375,21 +344,14 @@ async def main():
     holes = input("9 or 18 holes? (default 18): ").strip()
     holes = int(holes) if holes in ["9", "18"] else 18
 
-    print(f"\nLooking up '{location}'...")
-    try:
-        lat, lng, display_name = get_coordinates(location)
-    except ValueError as e:
-        print(e)
-        return
-
-    state_slug, city_slug = format_location_for_supreme(display_name, raw_input=location)
+    state_slug, city_slug = format_location_for_supreme(location)
     print(f"Supreme Golf path: /united-states/{state_slug}/{city_slug}\n")
 
     base_date = datetime.today()
     total = []
 
     for i in range(days_ahead):
-        date_str = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
+        date_str = (base_date + timedelta(days=i + 1)).strftime("%Y-%m-%d")
         print(f"Scraping {date_str}...")
         results = await scrape_supreme_golf(
             state_slug=state_slug,
