@@ -138,6 +138,7 @@ async def scrape_supreme_golf(
         )
         page = await context.new_page()
 
+        # Intercept location_list and tee_time_groups API responses
         async def handle_response(response):
             url = response.url
             try:
@@ -154,23 +155,23 @@ async def scrape_supreme_golf(
 
                 elif "tee_time_groups/at/" in url and response.status == 200:
                     data = await response.json()
-                    # Extract course_id from URL
                     parts = url.split("tee_time_groups/at/")
                     if len(parts) > 1:
                         course_id = int(parts[1].split("?")[0])
                         groups = data.get("tee_time_groups", [])
                         if groups:
                             intercepted_tee_times[course_id] = groups
-            except Exception as e:
+            except Exception:
                 pass
 
         page.on("response", handle_response)
 
-        # Navigate to search page — this triggers location_list API call
+        # Load the search page — triggers location_list API call
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(5)
-    
-        # Use the browser's own fetch to call tee_time_groups for each course
+        await asyncio.sleep(8)  # wait for API calls to complete
+
+        # Use the browser's own fetch() to call tee_time_groups for each course
+        # This works because the browser already has valid Cloudflare cookies
         if intercepted_courses:
             print(f"  Fetching tee times for {len(intercepted_courses)} courses via in-browser fetch...")
             for course in intercepted_courses:
@@ -195,7 +196,7 @@ async def scrape_supreme_golf(
                     """)
                     if result and result.get("tee_time_groups"):
                         intercepted_tee_times[course_id] = result["tee_time_groups"]
-                        print(f"    Got {len(result['tee_time_groups'])} tee times for course {course_id}")
+                        print(f"    Course {course_id}: {len(result['tee_time_groups'])} tee times")
                 except Exception as e:
                     print(f"    Error for course {course_id}: {e}")
                 await asyncio.sleep(0.3)
@@ -224,13 +225,13 @@ async def scrape_supreme_golf(
         tee_time_groups = intercepted_tee_times.get(course_id, [])
 
         if tee_time_groups:
-            # We have detailed tee times
+            # Detailed tee times from tee_time_groups API
             for group in tee_time_groups:
                 tee_off = group.get("tee_off_at_timezone", "")
                 try:
                     dt = datetime.fromisoformat(tee_off)
                     tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
-                except:
+                except Exception:
                     tee_time_str = ""
 
                 price = group.get("starting_rate", 0.0)
@@ -238,7 +239,7 @@ async def scrape_supreme_golf(
                 walking = 1 if "is_walking" in group.get("amenity_codes", []) else 0
 
                 for player_count in group.get("players", [players]):
-                    if price > 0 and tee_time_str:
+                    if tee_time_str:
                         results.append({
                             "course_id": course_id,
                             "course_name": course_name,
@@ -260,39 +261,37 @@ async def scrape_supreme_golf(
                             "scraped_at": scraped_at
                         })
         else:
-            # Fall back to summary data from location_list
+            # Fallback: use summary data from location_list
             stats = course.get("stats", {})
-            min_rate = stats.get("min_rate", 0.0)
+            min_rate = stats.get("min_rate") or course.get("min_rate") or 0.0
             min_tee_off = stats.get("min_tee_off_at", "")
-            max_tee_off = stats.get("max_tee_off_at", "")
 
             try:
                 dt = datetime.fromisoformat(min_tee_off.replace("Z", "+00:00"))
                 tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
-            except:
+            except Exception:
                 tee_time_str = "See site"
 
-            if min_rate > 0:
-                results.append({
-                    "course_id": course_id,
-                    "course_name": course_name,
-                    "address": address,
-                    "city": city,
-                    "state": state,
-                    "price": float(min_rate),
-                    "tee_time": tee_time_str,
-                    "date": date,
-                    "holes": holes,
-                    "players": players,
-                    "walking": 0,
-                    "rating": round(float(rating), 2),
-                    "rating_count": int(rating_count),
-                    "photo_url": photo_url,
-                    "distance_miles": float(distance),
-                    "source_platform": "Supreme Golf",
-                    "booking_url": booking_url,
-                    "scraped_at": scraped_at
-                })
+            results.append({
+                "course_id": course_id,
+                "course_name": course_name,
+                "address": address,
+                "city": city,
+                "state": state,
+                "price": float(min_rate) if min_rate else 0.0,
+                "tee_time": tee_time_str,
+                "date": date,
+                "holes": holes,
+                "players": players,
+                "walking": 0,
+                "rating": round(float(rating), 2),
+                "rating_count": int(rating_count),
+                "photo_url": photo_url,
+                "distance_miles": float(distance),
+                "source_platform": "Supreme Golf",
+                "booking_url": booking_url,
+                "scraped_at": scraped_at
+            })
 
     print(f"Total tee times built: {len(results)}")
     return results
@@ -361,7 +360,7 @@ async def main():
         for row in rows:
             print(f"{row[0]:<40} {row[1]:<10} ${row[2]:<7.2f} {row[3]:<7} {row[4]:<20} {row[5]}")
     else:
-        print("No results. Check the interception counts above.")
+        print("No results found.")
 
 
 if __name__ == "__main__":
