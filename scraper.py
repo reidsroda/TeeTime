@@ -148,7 +148,8 @@ async def fetch_course_list(
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",
-        "Connection": "keep-alive"
+        "Connection": "keep-alive",
+        "Cookie": "_gcl_au=1.1.137656730.1774905989; _gid=GA1.2.1046624575.1774905992; _mkto_trk=id:805-LWD-325&token:_mch-supremegolf.com-ec7a942ed0d1020cd802a89dcc01cab; _twpid=tw.1774909440837.332619037646052016; _hjSessionUser_6427010=eyJpZCI6ImZjZDZhYmVmLTcwNzItNTU5MS1iMTM5LTlhMTBjN2EyY2JhOCIsImNyZWF0ZWQiOjE3NzQ5MDU5OTM3NzgsImV4aXN0aW5nIjp0cnVlfQ==; _fbp=fb.1.1774909444671.392257168512401481; _hjSession_6427010=eyJpZCI6ImNkNjJlNTY1LWFjNjktNDVkMC04M2FjLTgwYjg2MTI5MTlhNCIsImMiOjE3NzQ5MTUwODExMDUsInMiOjAsInIiOjAsInNiIjowLCJzciI6MCwic2UiOjAsImZzIjowLCJzcCI6MH0=; _gcl_gs=2.1.k1$i1774915939$u71472145; cf_clearance=X0VeMqFIDCn9LBmYqdbbHpGVEYtSAdWpxStFaRs9U_g-1774915943-1.2.1.1-ePd9j7InHVkAn8eLxfOGO81rM0t0Xtkk.LfJ6KNC8fm1qWtx3YNSf3ALMnkrLfVncecCPPNsSC2IUbYjihGVKxrAmkTke1HPGDpFqpoN.KYQi0Mm7DMiUyiLe.LuWl0kI6XZxCB9G7eE9PUHdWS9zNxknHVo7vS0X9SGPwbxoLATIo82DXoclUvj9s0WPaILP_zFbkE0i0DjbfJ0IWVayIGbDgVonPbxBb8e3RbHovc; _gcl_aw=GCL.1774915944.CjwKCAjwvqjOBhAGEiwAngeQnXElrJsrjoeoKcB7F-31RM69n98w0tWev7j0FlUhh3cUGeCPdhJMVRoCA7cQAvD_BwE; _ga_74F7C8WYZH=GS2.1.s1774915080$o3$g1$t1774915944$j52$l0$h0; _ga=GA1.2.1320445546.1774905990; _gac_UA-23648724-1=1.1774915945.CjwKCAjwvqjOBhAGEiwAngeQnXElrJsrjoeoKcB7F-31RM69n98w0tWev7j0FlUhh3cUGeCPdhJMVRoCA7cQAvD_BwE; _uetsid=200b1a402c7f11f1a73f69bc3fa12158; _uetvid=200b89d02c7f11f185c255798680a899; _gat_UA-23648724-1=1"
     }
 
     async with aiohttp.ClientSession() as session:
@@ -212,7 +213,8 @@ async def fetch_tee_times_for_course(
     "Sec-Fetch-Dest": "empty",
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-site",
-    "Connection": "keep-alive"
+    "Connection": "keep-alive",
+    "Cookie": "_gcl_au=1.1.137656730.1774905989; _gid=GA1.2.1046624575.1774905992; _mkto_trk=id:805-LWD-325&token:_mch-supremegolf.com-ec7a942ed0d1020cd802a89dcc01cab; _twpid=tw.1774909440837.332619037646052016; _hjSessionUser_6427010=eyJpZCI6ImZjZDZhYmVmLTcwNzItNTU5MS1iMTM5LTlhMTBjN2EyY2JhOCIsImNyZWF0ZWQiOjE3NzQ5MDU5OTM3NzgsImV4aXN0aW5nIjp0cnVlfQ==; _fbp=fb.1.1774909444671.392257168512401481; _hjSession_6427010=eyJpZCI6ImNkNjJlNTY1LWFjNjktNDVkMC04M2FjLTgwYjg2MTI5MTlhNCIsImMiOjE3NzQ5MTUwODExMDUsInMiOjAsInIiOjAsInNiIjowLCJzciI6MCwic2UiOjAsImZzIjowLCJzcCI6MH0=; _gcl_gs=2.1.k1$i1774915939$u71472145; cf_clearance=X0VeMqFIDCn9LBmYqdbbHpGVEYtSAdWpxStFaRs9U_g-1774915943-1.2.1.1-ePd9j7InHVkAn8eLxfOGO81rM0t0Xtkk.LfJ6KNC8fm1qWtx3YNSf3ALMnkrLfVncecCPPNsSC2IUbYjihGVKxrAmkTke1HPGDpFqpoN.KYQi0Mm7DMiUyiLe.LuWl0kI6XZxCB9G7eE9PUHdWS9zNxknHVo7vS0X9SGPwbxoLATIo82DXoclUvj9s0WPaILP_zFbkE0i0DjbfJ0IWVayIGbDgVonPbxBb8e3RbHovc; _gcl_aw=GCL.1774915944.CjwKCAjwvqjOBhAGEiwAngeQnXElrJsrjoeoKcB7F-31RM69n98w0tWev7j0FlUhh3cUGeCPdhJMVRoCA7cQAvD_BwE; _ga_74F7C8WYZH=GS2.1.s1774915080$o3$g1$t1774915944$j52$l0$h0; _ga=GA1.2.1320445546.1774905990; _gac_UA-23648724-1=1.1774915945.CjwKCAjwvqjOBhAGEiwAngeQnXElrJsrjoeoKcB7F-31RM69n98w0tWev7j0FlUhh3cUGeCPdhJMVRoCA7cQAvD_BwE; _uetsid=200b1a402c7f11f1a73f69bc3fa12158; _uetvid=200b89d02c7f11f185c255798680a899; _gat_UA-23648724-1=1"
     }
 
     results = []
