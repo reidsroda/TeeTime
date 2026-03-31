@@ -148,7 +148,7 @@ async def fetch_course_list(
     city_slug: str,
     date: str,
     holes: int = 18,
-    players: int = 1.
+    players: int = 1,
     cookies: str = ""
 ) -> list:
     hierarchized_url = f"/united-states/{state_slug}/{city_slug}"
