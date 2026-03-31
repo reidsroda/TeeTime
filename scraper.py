@@ -1,13 +1,13 @@
 import asyncio
 import json
 import sqlite3
-import aiohttp
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta
+from playwright.async_api import async_playwright
 
 
-# ── DATABASE SETUP ──────────────────────────────────────────
+# ── DATABASE ─────────────────────────────────────────────────
 def init_db():
     conn = sqlite3.connect("tee_times.db")
     c = conn.cursor()
@@ -29,7 +29,7 @@ def init_db():
             rating REAL,
             rating_count INTEGER,
             photo_url TEXT,
-            distance_miles INTEGER,
+            distance_miles REAL,
             source_platform TEXT,
             booking_url TEXT,
             scraped_at TEXT
@@ -59,7 +59,7 @@ def save_tee_times(tee_times: list):
     conn.close()
 
 
-# ── GEOCODING ────────────────────────────────────────────────
+# ── GEOCODING ─────────────────────────────────────────────────
 def get_coordinates(location: str) -> tuple:
     query = urllib.parse.quote(location)
     url = (
@@ -73,20 +73,12 @@ def get_coordinates(location: str) -> tuple:
     if not data:
         raise ValueError(f"Could not find coordinates for: {location}")
 
-    print("\nLocation candidates found:")
-    for i, result in enumerate(data):
-        print(f"  [{i}] {result['display_name']}")
-
     preferred = ["city", "town", "village", "municipality", "administrative"]
-    best = next((r for r in data if r.get("type") in preferred or r.get("class") == "place"), data[0])
-
-    print(f"\nUsing: {best['display_name']}")
-    confirm = input("Is this correct? (y/n): ").strip().lower()
-    if confirm != "y":
-        idx = input(f"Enter number [0-{len(data)-1}]: ").strip()
-        if idx.isdigit() and int(idx) < len(data):
-            best = data[int(idx)]
-
+    best = next(
+        (r for r in data if r.get("type") in preferred or r.get("class") == "place"),
+        data[0]
+    )
+    print(f"Using location: {best['display_name']}")
     return float(best["lat"]), float(best["lon"]), best["display_name"]
 
 
@@ -115,230 +107,184 @@ def format_location_for_supreme(display_name: str) -> tuple:
     state_slug = next((us_states[p.strip()] for p in parts if p.strip() in us_states), "")
     return state_slug, city_slug
 
-async def get_session_cookies() -> str:
-    """Launch a headless browser briefly to get valid Cloudflare cookies"""
-    from playwright.async_api import async_playwright
-    
-    print("Getting session cookies from browser...")
-    cookies_str = ""
-    
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        )
-        page = await context.new_page()
-        
-        # Visit Supreme Golf to get Cloudflare clearance
-        await page.goto("https://www.supremegolf.com/search", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(3)
-        
-        # Extract all cookies
-        cookies = await context.cookies()
-        cookies_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-        
-        await browser.close()
-    
-    print("Session cookies obtained.")
-    return cookies_str
 
-# ── STEP 1: Get course list via location_list API ────────────
-async def fetch_course_list(
+# ── PLAYWRIGHT SCRAPER ────────────────────────────────────────
+async def scrape_supreme_golf(
     state_slug: str,
     city_slug: str,
     date: str,
-    holes: int = 18,
     players: int = 1,
-    cookies: str = ""
+    holes: int = 18
 ) -> list:
-    hierarchized_url = f"/united-states/{state_slug}/{city_slug}"
-    url = (
-        f"https://api.supremegolf.com/location_list"
-        f"?hierarchized_url={urllib.parse.quote(hierarchized_url)}"
+
+    search_url = (
+        f"https://www.supremegolf.com/search"
+        f"?hierarchized_url=/united-states/{state_slug}/{city_slug}"
         f"&date={date}"
-        f"&holes={holes if holes else ''}"
         f"&players={players}"
-        f"&is_prepaid_only=false"
-        f"&hot_deals_search=false"
+        f"&holes={holes}"
     )
 
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "en-US,en;q=0.9",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Origin": "https://www.supremegolf.com",
-        "Referer": "https://www.supremegolf.com/search",
-        "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"macOS"',
-        "Sec-Fetch-Dest": "empty",
-        "Sec-Fetch-Mode": "cors",
-        "Sec-Fetch-Site": "same-site",
-        "Connection": "keep-alive",
-        "Cookie": cookies
-    }
+    print(f"Loading: {search_url}")
 
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                courses = []
-                for item in data.get("location_results", []):
-                    if item.get("type") == "Course":
-                        c = item["course"]
-                        # Only include courses with available tee times
-                        if c.get("stats", {}).get("tee_times_count", 0) > 0:
-                            courses.append({
-                                "id": c["id"],
-                                "name": c["name"],
-                                "address": c.get("formatted_address", ""),
-                                "city": c.get("address_city", ""),
-                                "state": c.get("address_state", ""),
-                                "rating": c.get("rating", {}).get("value", 0.0),
-                                "rating_count": c.get("rating", {}).get("count", 0),
-                                "photo_url": c.get("photo_medium_url", ""),
-                                "distance": c.get("distance", 0),
-                                "min_rate": c.get("min_rate", 0),
-                                "max_rate": c.get("max_rate", 0),
-                                "hierarchized_url": c.get("hierarchized_url", ""),
-                            })
-                print(f"Found {len(courses)} courses with available tee times")
-                return courses
-            else:
-                print(f"location_list API returned {resp.status}")
-                return []
+    intercepted_courses = []
+    intercepted_tee_times = {}  # course_id -> list of tee time groups
 
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            viewport={"width": 1280, "height": 900}
+        )
+        page = await context.new_page()
 
-# ── STEP 2: Get tee times per course via tee_time_groups API ─
-async def fetch_tee_times_for_course(
-    session: aiohttp.ClientSession,
-    course: dict,
-    date: str,
-    holes: int = 18,
-    cookies: str = ""
-) -> list:
-    course_id = course["id"]
-    url = (
-        f"https://api.supremegolf.com/api/v6/tee_time_groups/at/{course_id}"
-        f"?date={date}"
-        f"&num_holes={holes}"
-        f"&is_prepaid_only=false"
-        f"&include_featured=true"
-        f"&network_membership_only=false"
-    )
+        async def handle_response(response):
+            url = response.url
+            try:
+                if "location_list" in url and response.status == 200:
+                    data = await response.json()
+                    courses = []
+                    for item in data.get("location_results", []):
+                        if item.get("type") == "Course":
+                            c = item["course"]
+                            if c.get("stats", {}).get("tee_times_count", 0) > 0:
+                                courses.append(c)
+                    intercepted_courses.extend(courses)
+                    print(f"  Intercepted location_list: {len(courses)} courses with tee times")
 
-    headers = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Origin": "https://www.supremegolf.com",
-    "Referer": "https://www.supremegolf.com/search",
-    "sec-ch-ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-    "sec-ch-ua-mobile": "?0",
-    "sec-ch-ua-platform": '"macOS"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "same-site",
-    "Connection": "keep-alive",
-    "Cookie": cookies
-    }
+                elif "tee_time_groups/at/" in url and response.status == 200:
+                    data = await response.json()
+                    # Extract course_id from URL
+                    parts = url.split("tee_time_groups/at/")
+                    if len(parts) > 1:
+                        course_id = int(parts[1].split("?")[0])
+                        groups = data.get("tee_time_groups", [])
+                        if groups:
+                            intercepted_tee_times[course_id] = groups
+            except Exception as e:
+                pass
 
+        page.on("response", handle_response)
+
+        # Navigate to search page — this triggers location_list API call
+        await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(5)
+
+        # Now click each course card to trigger tee_time_groups API calls
+        # Or scroll to trigger lazy loading
+        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        await asyncio.sleep(3)
+        await page.evaluate("window.scrollTo(0, 0)")
+        await asyncio.sleep(2)
+
+        await browser.close()
+
+    print(f"Intercepted {len(intercepted_courses)} courses, {len(intercepted_tee_times)} with tee time details")
+
+    # Build results
     results = []
-    try:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
-            if resp.status == 200:
-                data = await resp.json()
-                booking_url = f"https://www.supremegolf.com{course['hierarchized_url']}"
+    scraped_at = datetime.now().isoformat()
 
-                for group in data.get("tee_time_groups", []):
-                    tee_off = group.get("tee_off_at_timezone", "")
-                    try:
-                        dt = datetime.fromisoformat(tee_off)
-                        tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
-                    except:
-                        tee_time_str = ""
+    for course in intercepted_courses:
+        course_id = course["id"]
+        course_name = course["name"]
+        address = course.get("formatted_address", "")
+        city = course.get("address_city", "")
+        state = course.get("address_state", "")
+        rating = course.get("rating", {}).get("value", 0.0)
+        rating_count = course.get("rating", {}).get("count", 0)
+        photo_url = course.get("photo_medium_url", "")
+        distance = course.get("distance", 0)
+        hierarchized_url = course.get("hierarchized_url", "")
+        booking_url = f"https://www.supremegolf.com{hierarchized_url}"
 
-                    amenities = group.get("amenity_codes", [])
-                    walking = 1 if "is_walking" in amenities else 0
-                    holes_list = group.get("holes", [holes])
-                    hole_count = holes_list[0] if holes_list else holes
+        tee_time_groups = intercepted_tee_times.get(course_id, [])
 
-                    for player_count in group.get("players", [1]):
+        if tee_time_groups:
+            # We have detailed tee times
+            for group in tee_time_groups:
+                tee_off = group.get("tee_off_at_timezone", "")
+                try:
+                    dt = datetime.fromisoformat(tee_off)
+                    tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
+                except:
+                    tee_time_str = ""
+
+                price = group.get("starting_rate", 0.0)
+                hole_count = (group.get("holes") or [holes])[0]
+                walking = 1 if "is_walking" in group.get("amenity_codes", []) else 0
+
+                for player_count in group.get("players", [players]):
+                    if price > 0 and tee_time_str:
                         results.append({
                             "course_id": course_id,
-                            "course_name": course["name"],
-                            "address": course["address"],
-                            "city": course["city"],
-                            "state": course["state"],
-                            "price": group.get("starting_rate", 0.0),
+                            "course_name": course_name,
+                            "address": address,
+                            "city": city,
+                            "state": state,
+                            "price": float(price),
                             "tee_time": tee_time_str,
                             "date": date,
                             "holes": hole_count,
                             "players": player_count,
                             "walking": walking,
-                            "rating": round(course["rating"], 2),
-                            "rating_count": course["rating_count"],
-                            "photo_url": course["photo_url"],
-                            "distance_miles": course["distance"],
+                            "rating": round(float(rating), 2),
+                            "rating_count": int(rating_count),
+                            "photo_url": photo_url,
+                            "distance_miles": float(distance),
                             "source_platform": "Supreme Golf",
                             "booking_url": booking_url,
-                            "scraped_at": datetime.now().isoformat()
+                            "scraped_at": scraped_at
                         })
-    except Exception as e:
-        print(f"  Error fetching tee times for {course['name']}: {e}")
+        else:
+            # Fall back to summary data from location_list
+            stats = course.get("stats", {})
+            min_rate = stats.get("min_rate", 0.0)
+            min_tee_off = stats.get("min_tee_off_at", "")
+            max_tee_off = stats.get("max_tee_off_at", "")
 
+            try:
+                dt = datetime.fromisoformat(min_tee_off.replace("Z", "+00:00"))
+                tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
+            except:
+                tee_time_str = "See site"
+
+            if min_rate > 0:
+                results.append({
+                    "course_id": course_id,
+                    "course_name": course_name,
+                    "address": address,
+                    "city": city,
+                    "state": state,
+                    "price": float(min_rate),
+                    "tee_time": tee_time_str,
+                    "date": date,
+                    "holes": holes,
+                    "players": players,
+                    "walking": 0,
+                    "rating": round(float(rating), 2),
+                    "rating_count": int(rating_count),
+                    "photo_url": photo_url,
+                    "distance_miles": float(distance),
+                    "source_platform": "Supreme Golf",
+                    "booking_url": booking_url,
+                    "scraped_at": scraped_at
+                })
+
+    print(f"Total tee times built: {len(results)}")
     return results
-
-
-# ── MAIN SCRAPE FUNCTION ─────────────────────────────────────
-async def scrape_supreme_golf(
-    location: str,
-    lat: float,
-    lng: float,
-    date: str,
-    players: int = 1,
-    holes: int = 18,
-    state_slug: str = "",
-    city_slug: str = ""
-) -> list:
-    print(f"\nFetching course list for {city_slug}, {state_slug} on {date}...")
-
-    # Step 1: get all courses
-    courses = await fetch_course_list(state_slug, city_slug, date, holes, players)
-    if not courses:
-        print("No courses found.")
-        return []
-
-    # Step 2: fetch tee times for each course concurrently
-    all_results = []
-    async with aiohttp.ClientSession() as session:
-        tasks = [fetch_tee_times_for_course(session, course, date, holes) for course in courses]
-        batch_size = 10  # limit concurrent requests
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
-            batch_results = await asyncio.gather(*batch)
-            for r in batch_results:
-                all_results.extend(r)
-            print(f"  Fetched tee times for {min(i + batch_size, len(tasks))}/{len(tasks)} courses")
-            await asyncio.sleep(0.5)  # small delay between batches
-
-    print(f"Total tee times fetched: {len(all_results)}")
-    return all_results
 
 
 # ── MAIN ─────────────────────────────────────────────────────
 async def main():
     init_db()
 
-    location = input("Enter your location (city, state or zip code): ").strip()
+    location = input("Enter city, state (e.g. Miami, FL): ").strip()
     if not location:
-        print("No location entered.")
         return
 
-    days_ahead = input("How many days ahead to search? (default 3): ").strip()
-    days_ahead = int(days_ahead) if days_ahead.isdigit() else 3
+    days_ahead = input("How many days ahead? (default 1): ").strip()
+    days_ahead = int(days_ahead) if days_ahead.isdigit() else 1
 
     players = input("Number of players? (default 1): ").strip()
     players = int(players) if players.isdigit() else 1
@@ -346,33 +292,34 @@ async def main():
     holes = input("9 or 18 holes? (default 18): ").strip()
     holes = int(holes) if holes in ["9", "18"] else 18
 
-    print(f"\nLooking up coordinates for '{location}'...")
+    print(f"\nLooking up '{location}'...")
     try:
         lat, lng, display_name = get_coordinates(location)
-        print(f"Coordinates: {lat}, {lng}\n")
     except ValueError as e:
         print(e)
         return
 
     state_slug, city_slug = format_location_for_supreme(display_name)
-    print(f"Supreme Golf path: /explore/united-states/{state_slug}/{city_slug}")
+    print(f"Supreme Golf path: /united-states/{state_slug}/{city_slug}\n")
 
     base_date = datetime.today()
-    total_results = []
+    total = []
 
     for i in range(days_ahead):
         date_str = (base_date + timedelta(days=i)).strftime("%Y-%m-%d")
-        print(f"\nScraping {date_str}...")
+        print(f"Scraping {date_str}...")
         results = await scrape_supreme_golf(
-            location=location, lat=lat, lng=lng,
-            date=date_str, players=players, holes=holes,
-            state_slug=state_slug, city_slug=city_slug
+            state_slug=state_slug,
+            city_slug=city_slug,
+            date=date_str,
+            players=players,
+            holes=holes
         )
         if results:
             save_tee_times(results)
-            total_results.extend(results)
+            total.extend(results)
 
-    print(f"\n── Done: {len(total_results)} tee times saved ──")
+    print(f"\n── Done: {len(total)} tee times saved ──\n")
 
     conn = sqlite3.connect("tee_times.db")
     c = conn.cursor()
@@ -385,10 +332,13 @@ async def main():
     rows = c.fetchall()
     conn.close()
 
-    print(f"\n{'Course':<40} {'Time':<10} {'Price':<8} {'Rating':<7} {'City':<20} {'Miles'}")
-    print("-" * 100)
-    for row in rows:
-        print(f"{row[0]:<40} {row[1]:<10} ${row[2]:<7} {row[3]:<7} {row[4]:<20} {row[5]}")
+    if rows:
+        print(f"{'Course':<40} {'Time':<10} {'Price':<8} {'Rating':<7} {'City':<20} {'Miles'}")
+        print("-" * 100)
+        for row in rows:
+            print(f"{row[0]:<40} {row[1]:<10} ${row[2]:<7.2f} {row[3]:<7} {row[4]:<20} {row[5]}")
+    else:
+        print("No results. Check the interception counts above.")
 
 
 if __name__ == "__main__":
