@@ -267,7 +267,9 @@ async def scrape_supreme_golf(
             min_tee_off = stats.get("min_tee_off_at", "")
 
             try:
-                dt = datetime.fromisoformat(min_tee_off.replace("Z", "+00:00"))
+                # Handle both "2026-03-31T07:20:00.000Z" and "2026-03-31T07:20:00Z"
+                clean = min_tee_off.replace("Z", "").split(".")[0]  # strip Z and milliseconds
+                dt = datetime.fromisoformat(clean)
                 tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
             except Exception:
                 tee_time_str = "See site"
