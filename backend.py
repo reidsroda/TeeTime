@@ -176,6 +176,11 @@ async def chat(request: ChatRequest):
                 date = search_params.get("date", "")
                 state_slug = search_params.get("state_slug", "")
                 city_slug = search_params.get("city_slug", "")
+                print(f"DEBUG city: '{city}'")
+                print(f"DEBUG date: '{date}'")
+                print(f"DEBUG state_slug: '{state_slug}'")
+                print(f"DEBUG city_slug: '{city_slug}'")
+                print(f"DEBUG has_data: {has_data_for(city, date)}")
 
                 # Check if we already have data, if not scrape
                 if not has_data_for(city, date):
@@ -208,6 +213,9 @@ async def chat(request: ChatRequest):
                     "tee_time_after": search_params.get("tee_time_after"),
                     "tee_time_before": search_params.get("tee_time_before"),
                 })
+                print(f"DEBUG query results: {len(results)}")
+                if results:
+                    print(f"DEBUG first result: {results[0]}")
 
                 if results:
                     # Send results back to Claude for ranking
