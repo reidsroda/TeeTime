@@ -61,7 +61,7 @@ def save_tee_times(tee_times: list):
 
 # ── GEOCODING ─────────────────────────────────────────────────
 def get_coordinates(location: str) -> tuple:
-    query = urllib.parse.quote(location)
+    query = urllib.parse.quote(location + ", USA")
     url = (
         f"https://nominatim.openstreetmap.org/search"
         f"?q={query}&format=json&limit=5&addressdetails=1&countrycodes=us"
@@ -79,13 +79,31 @@ def get_coordinates(location: str) -> tuple:
         data[0]
     )
     print(f"Using location: {best['display_name']}")
+    print(f"Coordinates: {best['lat']}, {best['lon']}")
     return float(best["lat"]), float(best["lon"]), best["display_name"]
 
 
-def format_location_for_supreme(display_name: str) -> tuple:
-    parts = [p.strip().lower() for p in display_name.split(",")]
+def format_location_for_supreme(display_name: str, raw_input: str = "") -> tuple:
+    source = raw_input if raw_input else display_name
+    parts = [p.strip().lower() for p in source.split(",")]
     city_slug = parts[0].replace(" ", "-")
-    us_states = {
+
+    us_state_abbrevs = {
+        "al": "alabama", "ak": "alaska", "az": "arizona", "ar": "arkansas",
+        "ca": "california", "co": "colorado", "ct": "connecticut", "de": "delaware",
+        "fl": "florida", "ga": "georgia", "hi": "hawaii", "id": "idaho",
+        "il": "illinois", "in": "indiana", "ia": "iowa", "ks": "kansas",
+        "ky": "kentucky", "la": "louisiana", "me": "maine", "md": "maryland",
+        "ma": "massachusetts", "mi": "michigan", "mn": "minnesota", "ms": "mississippi",
+        "mo": "missouri", "mt": "montana", "ne": "nebraska", "nv": "nevada",
+        "nh": "new-hampshire", "nj": "new-jersey", "nm": "new-mexico", "ny": "new-york",
+        "nc": "north-carolina", "nd": "north-dakota", "oh": "ohio", "ok": "oklahoma",
+        "or": "oregon", "pa": "pennsylvania", "ri": "rhode-island", "sc": "south-carolina",
+        "sd": "south-dakota", "tn": "tennessee", "tx": "texas", "ut": "utah",
+        "vt": "vermont", "va": "virginia", "wa": "washington", "wv": "west-virginia",
+        "wi": "wisconsin", "wy": "wyoming"
+    }
+    us_states_full = {
         "alabama": "alabama", "alaska": "alaska", "arizona": "arizona",
         "arkansas": "arkansas", "california": "california", "colorado": "colorado",
         "connecticut": "connecticut", "delaware": "delaware", "florida": "florida",
@@ -104,7 +122,17 @@ def format_location_for_supreme(display_name: str) -> tuple:
         "vermont": "vermont", "virginia": "virginia", "washington": "washington",
         "west virginia": "west-virginia", "wisconsin": "wisconsin", "wyoming": "wyoming"
     }
-    state_slug = next((us_states[p.strip()] for p in parts if p.strip() in us_states), "")
+
+    state_slug = ""
+    for p in parts[1:]:
+        p = p.strip().lower()
+        if p in us_state_abbrevs:
+            state_slug = us_state_abbrevs[p]
+            break
+        if p in us_states_full:
+            state_slug = us_states_full[p]
+            break
+
     return state_slug, city_slug
 
 
@@ -128,7 +156,7 @@ async def scrape_supreme_golf(
     print(f"Loading: {search_url}")
 
     intercepted_courses = []
-    intercepted_tee_times = {}  # course_id -> list of tee time groups
+    intercepted_tee_times = {}
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -138,7 +166,6 @@ async def scrape_supreme_golf(
         )
         page = await context.new_page()
 
-        # Intercept location_list and tee_time_groups API responses
         async def handle_response(response):
             url = response.url
             try:
@@ -166,12 +193,17 @@ async def scrape_supreme_golf(
 
         page.on("response", handle_response)
 
-        # Load the search page — triggers location_list API call
         await page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(8)  # wait for API calls to complete
 
-        # Use the browser's own fetch() to call tee_time_groups for each course
-        # This works because the browser already has valid Cloudflare cookies
+        # Wait up to 15 seconds for location_list to fire
+        for _ in range(15):
+            await asyncio.sleep(1)
+            if intercepted_courses:
+                await asyncio.sleep(2)
+                break
+
+        # Use browser's own fetch() to call tee_time_groups for each course
+        # Requests originate inside the browser so Cloudflare cookies are attached
         if intercepted_courses:
             print(f"  Fetching tee times for {len(intercepted_courses)} courses via in-browser fetch...")
             for course in intercepted_courses:
@@ -205,7 +237,7 @@ async def scrape_supreme_golf(
 
     print(f"Intercepted {len(intercepted_courses)} courses, {len(intercepted_tee_times)} with tee time details")
 
-    # Build results
+    # ── BUILD RESULTS ─────────────────────────────────────────
     results = []
     scraped_at = datetime.now().isoformat()
 
@@ -229,7 +261,8 @@ async def scrape_supreme_golf(
             for group in tee_time_groups:
                 tee_off = group.get("tee_off_at_timezone", "")
                 try:
-                    dt = datetime.fromisoformat(tee_off)
+                    clean = tee_off.replace("Z", "").split(".")[0]
+                    dt = datetime.fromisoformat(clean)
                     tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
                 except Exception:
                     tee_time_str = ""
@@ -261,14 +294,13 @@ async def scrape_supreme_golf(
                             "scraped_at": scraped_at
                         })
         else:
-            # Fallback: use summary data from location_list
+            # Fallback: summary data from location_list
             stats = course.get("stats", {})
             min_rate = stats.get("min_rate") or course.get("min_rate") or 0.0
             min_tee_off = stats.get("min_tee_off_at", "")
 
             try:
-                # Handle both "2026-03-31T07:20:00.000Z" and "2026-03-31T07:20:00Z"
-                clean = min_tee_off.replace("Z", "").split(".")[0]  # strip Z and milliseconds
+                clean = min_tee_off.replace("Z", "").split(".")[0]
                 dt = datetime.fromisoformat(clean)
                 tee_time_str = dt.strftime("%I:%M %p").lstrip("0")
             except Exception:
@@ -299,7 +331,33 @@ async def scrape_supreme_golf(
     return results
 
 
-# ── MAIN ─────────────────────────────────────────────────────
+# ── CALLED BY BACKEND ─────────────────────────────────────────
+async def run_scraper(city: str, state_abbrev: str, date: str, players: int = 1, holes: int = 18):
+    """Entry point called by backend.py"""
+    init_db()
+    location = f"{city}, {state_abbrev}"
+    try:
+        lat, lng, display_name = get_coordinates(location)
+    except ValueError as e:
+        print(e)
+        return 0
+
+    state_slug, city_slug = format_location_for_supreme(display_name, raw_input=location)
+    print(f"Supreme Golf path: /united-states/{state_slug}/{city_slug}")
+
+    results = await scrape_supreme_golf(
+        state_slug=state_slug,
+        city_slug=city_slug,
+        date=date,
+        players=players,
+        holes=holes
+    )
+    if results:
+        save_tee_times(results)
+    return len(results)
+
+
+# ── MAIN (standalone) ─────────────────────────────────────────
 async def main():
     init_db()
 
@@ -323,7 +381,7 @@ async def main():
         print(e)
         return
 
-    state_slug, city_slug = format_location_for_supreme(display_name)
+    state_slug, city_slug = format_location_for_supreme(display_name, raw_input=location)
     print(f"Supreme Golf path: /united-states/{state_slug}/{city_slug}\n")
 
     base_date = datetime.today()
