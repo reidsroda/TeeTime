@@ -2,6 +2,7 @@ import asyncio
 import json
 import sqlite3
 import urllib.parse
+import aiohttp
 from datetime import datetime, timedelta
 from playwright.async_api import async_playwright
 
@@ -112,6 +113,31 @@ def format_location_for_supreme(raw_input: str) -> tuple:
     return state_slug, city_slug
 
 
+# ── GET CITY ID ───────────────────────────────────────────────
+async def get_city_id(state_slug: str, city_slug: str) -> int:
+    """Fetch the Supreme Golf cityId for a given city via the /find API (no Cloudflare)"""
+    url = (
+        f"https://api.supremegolf.com/find"
+        f"?hierarchized_url=/united-states/{state_slug}/{city_slug}"
+    )
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Referer": "https://www.supremegolf.com/"
+    }
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    city_id = data.get("city", {}).get("id")
+                    print(f"  City ID: {city_id}")
+                    return city_id
+    except Exception as e:
+        print(f"  Could not fetch city ID: {e}")
+    return None
+
+
 # ── PLAYWRIGHT SCRAPER ────────────────────────────────────────
 async def scrape_supreme_golf(
     state_slug: str,
@@ -121,13 +147,20 @@ async def scrape_supreme_golf(
     holes: int = 18
 ) -> list:
 
+    # Get city ID first (no Cloudflare on this endpoint)
+    city_id = await get_city_id(state_slug, city_slug)
+
     search_url = (
-        f"https://www.supremegolf.com/search"
-        f"?hierarchized_url=/united-states/{state_slug}/{city_slug}"
-        f"&date={date}"
+        f"https://www.supremegolf.com/explore/united-states/{state_slug}/{city_slug}"
+        f"?date={date}"
         f"&players={players}"
         f"&holes={holes}"
+        f"&hotDealsSearch=false"
+        f"&isPrepaidOnly=false"
+        f"&networkMembershipOnly=false"
     )
+    if city_id:
+        search_url += f"&cityId={city_id}"
 
     print(f"Loading: {search_url}")
 
